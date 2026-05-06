@@ -1,54 +1,9 @@
-# Source files
-src/
-tsconfig.json
-eslint.config.js
-
-# UI frontend sources (only web/dist is shipped via "files" allowlist)
-web/src/
-web/node_modules/
-web/index.html
-web/vite.config.ts
-web/tsconfig.json
-web/tsconfig.node.json
-web/package.json
-web/package-lock.json
-web/postcss.config.js
-web/tailwind.config.js
-web/.gitignore
-
-# Development
+# package.json#files already acts as an allowlist; this file is just a
+# defensive filter for accidental sensitive artifacts that might land
+# under one of the included paths.
 .taskmaster/
-examples/
-
-# Tests
-*.test.ts
-*.spec.ts
-test/
-tests/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Documentation (keep README)
-docs/
-
-# Git
-.git/
-.gitignore
-.gitattributes
-
-# CI/CD
-.github/
-.gitlab-ci.yml
-.travis.yml
-
-# Other
+app_data
+.mcpregistry_*
 *.log
 .env
 .env.*
-app_data
-.mcpregistry_registry_token
-.mcpregistry_github_token

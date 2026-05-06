@@ -330,6 +330,14 @@ export async function startUIServer(opts: UIServerOptions): Promise<UIServer> {
 
   // ---- Static UI ----------------------------------------------------------
 
+  // Files emitted by Vite under /assets carry content hashes in their names,
+  // so they're safe to cache forever. Everything else (index.html, bare svg
+  // favicon, etc.) must revalidate on each load.
+  const cacheControlFor = (pathname: string): string =>
+    pathname.startsWith('assets/')
+      ? 'public, max-age=31536000, immutable'
+      : 'no-cache';
+
   app.get('*', async (c) => {
     const url = new URL(c.req.url);
     let pathname = decodeURIComponent(url.pathname);
@@ -345,7 +353,10 @@ export async function startUIServer(opts: UIServerOptions): Promise<UIServer> {
         const buf = await readFile(filePath);
         const ext = '.' + safe.split('.').pop();
         return new Response(new Uint8Array(buf), {
-          headers: { 'content-type': MIME[ext] ?? 'application/octet-stream' },
+          headers: {
+            'content-type': MIME[ext] ?? 'application/octet-stream',
+            'cache-control': cacheControlFor(safe),
+          },
         });
       }
     } catch {
@@ -353,7 +364,12 @@ export async function startUIServer(opts: UIServerOptions): Promise<UIServer> {
     }
     try {
       const buf = await readFile(join(WEB_DIST, 'index.html'));
-      return c.html(buf.toString('utf8'));
+      return new Response(buf.toString('utf8'), {
+        headers: {
+          'content-type': MIME['.html']!,
+          'cache-control': 'no-cache',
+        },
+      });
     } catch {
       return c.text(
         'UI bundle not found. Run `npm run build` and try again.',
