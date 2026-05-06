@@ -96,6 +96,8 @@ export interface PersistedMessage {
     toolCalls: PersistedToolCall[];
     usage?: UsageDetails;
     cost?: UsageCost;
+    provider?: ProviderId;
+    model?: string;
   };
   createdAt: number;
 }

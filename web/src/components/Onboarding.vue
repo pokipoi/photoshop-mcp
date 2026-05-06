@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import AdobeAppIcon from '@/components/AdobeAppIcon.vue';
+import ProviderIcon from '@/components/ProviderIcon.vue';
 import {
   apiListProviders,
   apiSaveKey,
@@ -80,7 +81,7 @@ async function submit(): Promise<void> {
               v-for="p in providers"
               :key="p.id"
               type="button"
-              class="rounded-md border px-2 py-2 text-xs font-medium transition"
+              class="flex flex-col items-center gap-1.5 rounded-md border px-2 py-3 text-xs font-medium transition"
               :class="
                 selectedId === p.id
                   ? 'border-primary bg-primary/10 text-primary'
@@ -88,6 +89,7 @@ async function submit(): Promise<void> {
               "
               @click="selectedId = p.id"
             >
+              <ProviderIcon :provider="p.id" :size="22" />
               {{ p.label }}
             </button>
           </div>

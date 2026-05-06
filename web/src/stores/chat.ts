@@ -23,6 +23,8 @@ export interface ChatMessage {
   toolCalls: ToolCall[];
   usage?: UsageDetails;
   cost?: UsageCost;
+  provider?: ProviderId;
+  model?: string;
   createdAt: number;
 }
 
@@ -123,6 +125,8 @@ export function useChatStore() {
         toolCalls: m.content.toolCalls ?? [],
         usage: m.content.usage,
         cost: m.content.cost,
+        provider: m.content.provider,
+        model: m.content.model,
         createdAt: m.createdAt,
       });
     }
@@ -155,11 +159,14 @@ export function useChatStore() {
   function ensureAssistantMessage(): ChatMessage {
     const last = messages[messages.length - 1];
     if (last && last.role === 'assistant') return last;
+    const activeChat = chats.value.find((c) => c.id === activeChatId.value);
     const created: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'assistant',
       text: '',
       toolCalls: [],
+      provider: activeChat?.provider,
+      model: activeChat?.model,
       createdAt: Date.now(),
     };
     messages.push(created);

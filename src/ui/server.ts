@@ -273,6 +273,8 @@ export async function startUIServer(opts: UIServerOptions): Promise<UIServer> {
           content: {
             text: buffer.text,
             toolCalls: buffer.toolCalls,
+            provider: chat.provider,
+            model: chat.model,
             ...(lastFinish?.usage ? { usage: lastFinish.usage } : {}),
             ...(lastFinish?.cost ? { cost: lastFinish.cost } : {}),
           },

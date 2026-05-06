@@ -24,6 +24,8 @@ export interface MessageContent {
   }>;
   usage?: LanguageModelUsage;
   cost?: UsageCost;
+  provider?: string;
+  model?: string;
 }
 
 export interface MessageRow {

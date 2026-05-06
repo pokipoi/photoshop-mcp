@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue';
 import { Check, ExternalLink, Loader2, Trash2, X } from 'lucide-vue-next';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import ProviderIcon from './ProviderIcon.vue';
 import {
   apiDeleteKey,
   apiListProviders,
@@ -83,6 +84,7 @@ async function removeKey(provider: ProviderInfo): Promise<void> {
         >
           <div class="mb-2 flex items-center justify-between">
             <div class="flex items-center gap-2">
+              <ProviderIcon :provider="p.id" :size="18" />
               <span class="text-sm font-semibold">{{ p.label }}</span>
               <span
                 v-if="p.hasApiKey"

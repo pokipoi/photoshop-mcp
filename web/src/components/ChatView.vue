@@ -55,7 +55,11 @@ async function onModelChange(modelId: string): Promise<void> {
     </div>
 
     <template v-else>
-      <MessageList :messages="props.store.messages" :busy="props.store.sending.value" />
+      <MessageList
+        :messages="props.store.messages"
+        :busy="props.store.sending.value"
+        :providers="props.providers"
+      />
 
       <div
         v-if="props.store.error.value"

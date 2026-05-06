@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import { ChevronDown, Check, Lock } from 'lucide-vue-next';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
+import ProviderIcon from './ProviderIcon.vue';
 import type { ProviderId, ProviderInfo, ProviderModel } from '@/lib/api';
 
 const props = defineProps<{
@@ -55,6 +56,7 @@ function onModelClick(prov: ProviderInfo, mdl: ProviderModel): void {
             :disabled="disabled"
             class="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
           >
+            <ProviderIcon :provider="currentProvider" :size="14" />
             <span class="font-normal">
               Model:
               <span class="font-medium text-foreground">
@@ -74,7 +76,10 @@ function onModelClick(prov: ProviderInfo, mdl: ProviderModel): void {
               <div
                 class="flex items-center justify-between gap-2 bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground"
               >
-                <span>{{ prov.label }}</span>
+                <span class="inline-flex items-center gap-1.5">
+                  <ProviderIcon :provider="prov.id" :size="14" />
+                  {{ prov.label }}
+                </span>
                 <span
                   v-if="!prov.hasApiKey"
                   class="inline-flex items-center gap-1 text-[10px] text-muted-foreground/80"
