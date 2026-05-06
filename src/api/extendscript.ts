@@ -830,17 +830,44 @@ export const ExtendScriptSnippets = {
   `,
 
   /**
-   * Adjust hue and saturation
+   * Adjust hue, saturation and lightness on the active layer.
+   *
+   * ArtLayer has no DOM method for Hue/Saturation - adjustColorBalance()
+   * is for Color Balance (cyan/red, magenta/green, yellow/blue) and would
+   * throw here. The correct path is the "HStr" Action Descriptor which
+   * matches the Image > Adjustments > Hue/Saturation menu command.
    */
   adjustHueSaturation: (hue: number, saturation: number, lightness: number) => `
+    ${helperFunctions}
+
     if (app.documents.length === 0) {
       throw new Error('No active document');
     }
     var layer = app.activeDocument.activeLayer;
-    
-    layer.adjustColorBalance([${hue}], [${saturation}], [${lightness}]);
-    
-    return { 
+
+    if (layer.kind === LayerKind.TEXT || layer.kind === LayerKind.SMARTOBJECT) {
+      layer.rasterize(RasterizeType.ENTIRELAYER);
+    }
+
+    var desc = new ActionDescriptor();
+    desc.putEnumerated(
+      sTID('presetKind'),
+      sTID('presetKindType'),
+      sTID('presetKindCustom')
+    );
+    desc.putBoolean(cTID('Clrz'), false);
+
+    var adjustments = new ActionList();
+    var adjustment = new ActionDescriptor();
+    adjustment.putInteger(cTID('H   '), ${hue});
+    adjustment.putInteger(cTID('Strt'), ${saturation});
+    adjustment.putInteger(cTID('Lght'), ${lightness});
+    adjustments.putObject(cTID('Hsrt'), adjustment);
+    desc.putList(cTID('Adjs'), adjustments);
+
+    executeAction(cTID('HStr'), desc, DialogModes.NO);
+
+    return {
       adjustment: 'Hue/Saturation',
       hue: ${hue},
       saturation: ${saturation},
