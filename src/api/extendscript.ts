@@ -462,6 +462,94 @@ export const ExtendScriptSnippets = {
   `,
 
   /**
+   * Capture current canvas as a JPEG snapshot.
+   *
+   * Workflow:
+   *   1. Duplicate the active document with mergedOnly=true to get a
+   *      flattened, throw-away copy. This guarantees the original is
+   *      not touched (no "save?" prompt, no history pollution).
+   *   2. If maxDimension > 0 and the longest side exceeds it, resample
+   *      down using BICUBIC for a smaller file.
+   *   3. Save the duplicate as JPEG with the requested quality.
+   *   4. Close the duplicate without saving.
+   *
+   * Returns the absolute path on disk and basic metadata.
+   */
+  captureCanvas: (path: string, quality = 3, maxDimension = 0) => `
+    if (!app.documents || app.documents.length === 0) {
+      throw new Error('No active document');
+    }
+    var doc = (typeof __safeActiveDoc === 'function') ? __safeActiveDoc() : app.activeDocument;
+    if (!doc) {
+      throw new Error('No accessible active document');
+    }
+
+    var saveFile = new File("${path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}");
+
+    // Make sure the parent directory exists.
+    try {
+      var parent = saveFile.parent;
+      if (parent && !parent.exists) parent.create();
+    } catch (e) {}
+
+    var origWidth = doc.width.as('px');
+    var origHeight = doc.height.as('px');
+
+    // Create a flattened duplicate so we never modify the user's document.
+    var snapshotDoc = doc.duplicate('__mcp_snapshot_' + (new Date()).getTime(), true);
+
+    var outputWidth = origWidth;
+    var outputHeight = origHeight;
+
+    try {
+      // Optionally downscale for a smaller snapshot file.
+      if (${maxDimension} > 0) {
+        var maxSide = Math.max(origWidth, origHeight);
+        if (maxSide > ${maxDimension}) {
+          var scale = ${maxDimension} / maxSide;
+          outputWidth = Math.max(1, Math.round(origWidth * scale));
+          outputHeight = Math.max(1, Math.round(origHeight * scale));
+          snapshotDoc.resizeImage(
+            UnitValue(outputWidth, 'px'),
+            UnitValue(outputHeight, 'px'),
+            null,
+            ResampleMethod.BICUBIC
+          );
+        }
+      }
+
+      // Flatten any remaining structure so JPEG save never complains.
+      try { snapshotDoc.flatten(); } catch (e) {}
+
+      var jpegOptions = new JPEGSaveOptions();
+      jpegOptions.quality = ${quality};
+      jpegOptions.embedColorProfile = false;
+      jpegOptions.formatOptions = FormatOptions.STANDARDBASELINE;
+      jpegOptions.matte = MatteType.NONE;
+
+      snapshotDoc.saveAs(saveFile, jpegOptions, true, Extension.LOWERCASE);
+    } finally {
+      try { snapshotDoc.close(SaveOptions.DONOTSAVECHANGES); } catch (e) {}
+    }
+
+    // Verify the file was written and report its size.
+    var fileSize = -1;
+    try { fileSize = saveFile.length; } catch (e) {}
+
+    return {
+      captured: true,
+      path: saveFile.fsName,
+      format: 'jpeg',
+      quality: ${quality},
+      sourceWidth: origWidth,
+      sourceHeight: origHeight,
+      width: outputWidth,
+      height: outputHeight,
+      fileSize: fileSize
+    };
+  `,
+
+  /**
    * Save document as PNG
    */
   saveAsPNG: (path: string) => `
