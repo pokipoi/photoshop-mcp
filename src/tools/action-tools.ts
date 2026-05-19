@@ -33,14 +33,15 @@ export function createActionTools(connection: PhotoshopConnection): ToolDefiniti
           'Execute custom ExtendScript (JSX) code inside Photoshop (advanced escape hatch).\n\n' +
           'Use when: no existing tool covers the operation and you can write safe JSX.\n' +
           'Do NOT use when: a recipe or atomic tool exists — prefer photoshop_recipe_* or photoshop_* tools.\n\n' +
-          'Returns: script return value serialized as text/JSON.\n' +
+          'Returns: script return value serialized as text/JSON. To capture a return value, use an explicit `return` statement at the top level of your code (e.g. `return { foo: app.activeDocument.name };`). Without a return, the result will be null. alert()/confirm()/prompt() are intercepted automatically and their messages are surfaced via tool logs instead of blocking the script. The active document is accessed safely - use `__safeActiveDoc()` if you need a robust handle.\n' +
           'Preconditions: valid ExtendScript; active document if script expects one. Side effects: depends on code.',
         inputSchema: {
           type: 'object',
           properties: {
             code: {
               type: 'string',
-              description: 'ExtendScript code to execute',
+              description:
+                'ExtendScript code to execute. Use `return value` to send a result back to the caller.',
             },
           },
           required: ['code'],

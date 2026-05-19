@@ -12,17 +12,28 @@ function sTID(s) { return app.stringIDToTypeID(s); }
 `;
 
 /**
- * Helper function to get current context information
+ * Helper function to get current context information.
+ *
+ * Uses __safeActiveDoc() (provided by the API wrapper) so that a stale
+ * app.activeDocument reference does not surface as "No such element"
+ * to the caller. Every property read is wrapped in try/catch so that
+ * partial document state still yields a usable context object.
  */
 const getContextInfo = `
 function getContextInfo() {
   var context = {
-    hasDocument: app.documents.length > 0
+    hasDocument: !!(app.documents && app.documents.length > 0)
   };
-  
-  if (context.hasDocument) {
-    try {
-    var doc = app.activeDocument;
+
+  if (!context.hasDocument) return context;
+
+  var doc = (typeof __safeActiveDoc === 'function') ? __safeActiveDoc() : null;
+  if (!doc) {
+    try { doc = app.activeDocument; } catch (e) {}
+  }
+  if (!doc) return context;
+
+  try {
     context.document = {
       name: doc.name,
       width: doc.width.as('px'),
@@ -31,51 +42,40 @@ function getContextInfo() {
       colorMode: String(doc.mode),
       layerCount: doc.layers.length,
       hasSelection: (function () {
-        try {
-          return !!(doc.selection && doc.selection.bounds);
-        } catch (e) {
-          // ExtendScript throws "No such element" when there is no active selection
-          return false;
-        }
+        try { return !!(doc.selection && doc.selection.bounds); }
+        catch (e) { return false; }
       })()
     };
-    
-    try {
-      if (doc.activeLayer) {
-        var layer = doc.activeLayer;
-        context.activeLayer = {
-          name: layer.name,
-          kind: String(layer.kind),
-          opacity: layer.opacity,
-          blendMode: String(layer.blendMode),
-          visible: layer.visible,
-          locked: layer.allLocked
-        };
-        try {
-          context.activeLayer.isBackground = layer.isBackgroundLayer;
-        } catch (e) {
-          context.activeLayer.isBackground = false;
-        }
-        try {
-          var bounds = layer.bounds;
-          context.activeLayer.bounds = {
-            left: bounds[0].as('px'),
-            top: bounds[1].as('px'),
-            right: bounds[2].as('px'),
-            bottom: bounds[3].as('px')
-          };
-        } catch (e) {
-          // Bounds not available for some layer types
-        }
-      }
-    } catch (e) {
-      context.activeLayer = null;
-    }
-    } catch (e) {
-      context.document = { error: e.message || String(e) };
-    }
+  } catch (e) {
+    context.document = { name: 'unknown', error: String(e.message || e) };
   }
-  
+
+  try {
+    if (doc.activeLayer) {
+      var layer = doc.activeLayer;
+      var info = {};
+      try { info.name = layer.name; } catch (e) {}
+      try { info.kind = String(layer.kind); } catch (e) {}
+      try { info.opacity = layer.opacity; } catch (e) {}
+      try { info.blendMode = String(layer.blendMode); } catch (e) {}
+      try { info.visible = layer.visible; } catch (e) {}
+      try { info.locked = layer.allLocked; } catch (e) {}
+      try { info.isBackground = layer.isBackgroundLayer; } catch (e) {}
+      try {
+        var bounds = layer.bounds;
+        info.bounds = {
+          left: bounds[0].as('px'),
+          top: bounds[1].as('px'),
+          right: bounds[2].as('px'),
+          bottom: bounds[3].as('px')
+        };
+      } catch (e) {}
+      context.activeLayer = info;
+    }
+  } catch (e) {
+    // ignore
+  }
+
   return context;
 }
 `;
@@ -268,11 +268,21 @@ export const ExtendScriptSnippets = {
    */
   getDocumentInfo: () => `
     ${getContextInfo}
-    
-    if (app.documents.length === 0) {
+
+    if (!app.documents || app.documents.length === 0) {
       throw new Error('No active document');
     }
-    
+
+    // Touch the doc through the safe accessor to recover from a
+    // stale activeDocument reference (which otherwise reads as
+    // "No such element" intermittently).
+    var doc = (typeof __safeActiveDoc === 'function') ? __safeActiveDoc() : null;
+    if (!doc) {
+      try { doc = app.activeDocument; } catch (e) {
+        throw new Error('No accessible active document');
+      }
+    }
+
     var context = getContextInfo();
     return context;
   `,
@@ -305,45 +315,100 @@ export const ExtendScriptSnippets = {
   `,
 
   /**
-   * Place an image file as a layer
+   * Place an image file as a layer.
+   *
+   * Photoshop's "Plc " action creates a Smart Object and (in some
+   * versions) leaves the document momentarily in a state where reading
+   * activeLayer.bounds throws "No such element". We therefore:
+   *   1. Run the place action with dialogs suppressed.
+   *   2. Try to commit any pending free transform (best-effort).
+   *   3. Read layer info defensively - any failure becomes a warning,
+   *      not a thrown error, so callers don't see a false "place
+   *      failed" when the file was actually placed correctly.
    */
   placeImage: (filePath: string, x = 0, y = 0) => `
     ${helperFunctions}
     ${getContextInfo}
-    
-    if (app.documents.length === 0) {
+
+    if (!app.documents || app.documents.length === 0) {
       throw new Error('No active document');
     }
-    
-    var imageFile = new File("${filePath.replace(/\\/g, '\\\\')}");
-    if (!imageFile.exists) {
-      throw new Error('Image file not found: ${filePath}');
+
+    var doc = (typeof __safeActiveDoc === 'function') ? __safeActiveDoc() : app.activeDocument;
+    if (!doc) {
+      throw new Error('No accessible active document');
     }
-    
+
+    var imageFile = new File("${filePath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}");
+    if (!imageFile.exists) {
+      throw new Error('Image file not found: ${filePath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}');
+    }
+
+    var preLayerCount = -1;
+    try { preLayerCount = doc.layers.length; } catch (e) {}
+
     // Place image using ActionDescriptor
     var desc = new ActionDescriptor();
     desc.putPath(cTID('null'), imageFile);
     desc.putEnumerated(cTID('FTcs'), cTID('QCSt'), cTID('Qcsa'));
-    
+
     var offsetDesc = new ActionDescriptor();
     offsetDesc.putUnitDouble(cTID('Hrzn'), cTID('#Pxl'), ${x});
     offsetDesc.putUnitDouble(cTID('Vrtc'), cTID('#Pxl'), ${y});
     desc.putObject(cTID('Ofst'), cTID('Ofst'), offsetDesc);
-    
+
     executeAction(cTID('Plc '), desc, DialogModes.NO);
-    
-    var layer = app.activeDocument.activeLayer;
-    var result = { 
+
+    // Best-effort: if a transform is still pending, commit it. Errors
+    // here are expected when no transform is active - swallow them.
+    try {
+      var __id = sTID('placedLayerCommit');
+      executeAction(__id, undefined, DialogModes.NO);
+    } catch (e) {}
+
+    // Build result defensively. Even if reading bounds throws, we still
+    // report the placement as successful so the caller doesn't see a
+    // false-negative error.
+    var result = {
       placed: true,
-      layerName: layer.name,
-      filePath: "${filePath}",
-      position: { x: ${x}, y: ${y} },
-      layerBounds: {
-        width: layer.bounds[2].as('px') - layer.bounds[0].as('px'),
-        height: layer.bounds[3].as('px') - layer.bounds[1].as('px')
-      },
-      context: getContextInfo()
+      filePath: "${filePath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}",
+      position: { x: ${x}, y: ${y} }
     };
+
+    var docAfter = null;
+    try { docAfter = (typeof __safeActiveDoc === 'function') ? __safeActiveDoc() : app.activeDocument; } catch (e) {}
+    if (docAfter) {
+      try {
+        if (preLayerCount >= 0 && docAfter.layers.length > preLayerCount) {
+          result.layerCountDelta = docAfter.layers.length - preLayerCount;
+        }
+      } catch (e) {}
+      try {
+        var layer = docAfter.activeLayer;
+        if (layer) {
+          try { result.layerName = layer.name; } catch (e) {}
+          try { result.layerKind = String(layer.kind); } catch (e) {}
+          try {
+            var b = layer.bounds;
+            result.layerBounds = {
+              left: b[0].as('px'),
+              top: b[1].as('px'),
+              right: b[2].as('px'),
+              bottom: b[3].as('px'),
+              width: b[2].as('px') - b[0].as('px'),
+              height: b[3].as('px') - b[1].as('px')
+            };
+          } catch (e) {
+            result.boundsWarning = String(e.message || e);
+          }
+        }
+      } catch (e) {
+        result.layerWarning = String(e.message || e);
+      }
+    }
+
+    try { result.context = getContextInfo(); } catch (e) {}
+
     return result;
   `,
 
@@ -529,27 +594,51 @@ export const ExtendScriptSnippets = {
   `,
 
   /**
-   * Get all layer names
+   * Get all layer names (top level only, kept for backward compat).
+   *
+   * Uses __safeActiveDoc() to recover from a stale activeDocument,
+   * and wraps every property read so a single misbehaving layer
+   * doesn't fail the whole listing with "No such element".
    */
   getLayerNames: () => `
     ${getContextInfo}
-    
-    if (app.documents.length === 0) {
+
+    if (!app.documents || app.documents.length === 0) {
       throw new Error('No active document');
     }
-    var doc = app.activeDocument;
+    var doc = (typeof __safeActiveDoc === 'function') ? __safeActiveDoc() : app.activeDocument;
+    if (!doc) {
+      throw new Error('No accessible active document');
+    }
+
+    function describeLayer(layer) {
+      var info = {};
+      try { info.name = layer.name; } catch (e) { info.name = '(unreadable)'; }
+      try { info.kind = String(layer.kind); } catch (e) {
+        try { info.kind = layer.typename; } catch (e2) {}
+      }
+      try { info.visible = layer.visible; } catch (e) {}
+      try { info.opacity = layer.opacity; } catch (e) {}
+      try { info.blendMode = String(layer.blendMode); } catch (e) {}
+      try {
+        if (layer.typename === 'LayerSet') {
+          info.isGroup = true;
+          var children = [];
+          for (var j = 0; j < layer.layers.length; j++) {
+            children.push(describeLayer(layer.layers[j]));
+          }
+          info.children = children;
+        }
+      } catch (e) {}
+      return info;
+    }
+
     var layers = [];
     for (var i = 0; i < doc.layers.length; i++) {
-      var layer = doc.layers[i];
-      layers.push({
-        name: layer.name,
-        kind: String(layer.kind),
-        visible: layer.visible,
-        opacity: layer.opacity,
-        blendMode: String(layer.blendMode)
-      });
+      try { layers.push(describeLayer(doc.layers[i])); }
+      catch (e) { layers.push({ name: '(error)', error: String(e.message || e) }); }
     }
-    
+
     var result = {
       layerCount: layers.length,
       layers: layers,
@@ -559,13 +648,82 @@ export const ExtendScriptSnippets = {
   `,
 
   /**
-   * Select layer by name
+   * Select a layer by name.
+   *
+   * Recursively searches all groups (LayerSets). Returns the layer's
+   * bounds and basic metadata so callers don't have to follow up with
+   * a separate query.
    */
-  selectLayer: (name: string) => `
-    if (app.documents.length === 0) {
+  selectLayerByName: (name: string) => `
+    if (!app.documents || app.documents.length === 0) {
       throw new Error('No active document');
     }
-    var doc = app.activeDocument;
+    var doc = (typeof __safeActiveDoc === 'function') ? __safeActiveDoc() : app.activeDocument;
+    if (!doc) {
+      throw new Error('No accessible active document');
+    }
+
+    var __target = "${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}";
+
+    function findLayer(group) {
+      for (var i = 0; i < group.layers.length; i++) {
+        var l = group.layers[i];
+        try {
+          if (l.name === __target) return l;
+        } catch (e) {}
+        try {
+          if (l.typename === 'LayerSet') {
+            var nested = findLayer(l);
+            if (nested) return nested;
+          }
+        } catch (e) {}
+      }
+      return null;
+    }
+
+    var found = findLayer(doc);
+    if (!found) {
+      throw new Error('Layer not found: "' + __target + '"');
+    }
+
+    doc.activeLayer = found;
+
+    var info = { selected: true, layerName: found.name };
+    try { info.kind = String(found.kind); } catch (e) {
+      try { info.kind = found.typename; } catch (e2) {}
+    }
+    try { info.visible = found.visible; } catch (e) {}
+    try { info.opacity = found.opacity; } catch (e) {}
+    try { info.locked = found.allLocked; } catch (e) {}
+    try {
+      var b = found.bounds;
+      info.bounds = {
+        left: b[0].as('px'),
+        top: b[1].as('px'),
+        right: b[2].as('px'),
+        bottom: b[3].as('px'),
+        width: b[2].as('px') - b[0].as('px'),
+        height: b[3].as('px') - b[1].as('px')
+      };
+    } catch (e) {
+      info.boundsWarning = String(e.message || e);
+    }
+
+    return info;
+  `,
+
+  /**
+   * Select layer by name (legacy alias, top-level only).
+   * Prefer selectLayerByName which also recurses into LayerSets.
+   */
+  selectLayer: (name: string) => `
+    if (!app.documents || app.documents.length === 0) {
+      throw new Error('No active document');
+    }
+    var doc = (typeof __safeActiveDoc === 'function') ? __safeActiveDoc() : app.activeDocument;
+    if (!doc) {
+      throw new Error('No accessible active document');
+    }
     for (var i = 0; i < doc.layers.length; i++) {
       if (doc.layers[i].name === "${name.replace(/"/g, '\\"')}") {
         doc.activeLayer = doc.layers[i];
