@@ -82,7 +82,8 @@ requests into reliable Photoshop actions:
   background, enhance portrait, prepare for web, export social variants, color
   grade, frequency separation, batch mockup, organize layers, gradient fade,
   sky blend, dodge & burn, remove distraction). Each wraps steps in a single
-  Photoshop history state (one Undo reverts all).
+  Photoshop history state (one Undo reverts all). **78 tools total** (66 atomic
+  + 12 recipe).
 - **State & preview** — `photoshop_get_state` (cheap snapshot),
   `photoshop_get_preview` (base64 JPEG for vision verification),
   `photoshop_get_capabilities` (version-aware feature flags).
@@ -99,13 +100,17 @@ Local MCP integration tests run against a live Photoshop instance over stdio
 (same path as Cursor / Claude Desktop). Last verified on **Photoshop 26.5.0**
 (macOS).
 
+*Recorded on PS 26.5.0 before the intent-expansion tools landed; counts predate
+the 4 new atomics + 4 new recipes — re-run `npm run test:mcp-all` to refresh.*
+
 | Suite | Command | Result |
 |-------|---------|--------|
 | Full tool + recipe sweep | `npm run test:mcp-all` | **94 pass**, **0 fail**, **3 skip** (97 total) |
 | Prompt-layer smoke | `npm run test:mcp-local` | 16 prompt templates + core recipes |
 | Prompt ↔ recipe parity | `npm run verify:photoshop-prompts` | 12↔12 strict match + 4 guides |
 
-**Tool coverage:** 66/66 atomic + recipe `photoshop_*` tools exercised sequentially.
+**Tool coverage:** 78 total tools (66 atomic `photoshop_*` + 12 recipe
+`photoshop_recipe_*`) — re-run `npm run test:mcp-all` for a fresh pass count.
 
 **Intentional skips** (environment-dependent, not regressions):
 
@@ -423,7 +428,7 @@ Never guess — read get_state after a failure and propose the next single step.
 - ✅ **Supports Photoshop 2012-2025+**
 - ✅ **ExtendScript API**: Universal compatibility via AppleScript/COM automation
 - ✅ **Auto-Detection**: Automatically finds Photoshop installation on your system
-- ✅ **66+ Tools**: Atomic `photoshop_*` tools plus 8 recipe tools for comprehensive automation
+- ✅ **78 Tools**: 66 atomic `photoshop_*` + 12 recipe `photoshop_recipe_*`
 - ✅ **AI/Prompt Layer**: 16 MCP prompt templates (12 recipe + 4 guide), server instructions, state/preview/capabilities tools
 - ✅ **Document Management**: Create, open, save, close, crop documents
 - ✅ **Layer Operations**: Create, delete, duplicate, merge, transform layers
@@ -431,8 +436,8 @@ Never guess — read get_state after a failure and propose the next single step.
 - ✅ **Text Formatting**: Font, size, color, alignment controls
 - ✅ **Image Placement**: Place images, open files, fit to document
 - ✅ **Filters**: Gaussian Blur, Sharpen, Noise, Motion Blur
-- ✅ **Color Adjustments**: Brightness/Contrast, Hue/Saturation, Auto Levels/Contrast
-- ✅ **Selections & Masks**: Rectangular selections, layer masks
+- ✅ **Color Adjustments**: Brightness/Contrast, Hue/Saturation, Curves, Auto Levels/Contrast
+- ✅ **Selections & Masks**: Rectangular selections, select subject, content-aware fill, gradient mask, layer masks
 - ✅ **History Control**: Undo/Redo operations, view history states
 - ✅ **Actions**: Play recorded actions, execute custom scripts
 - ✅ **Auto-Rasterize**: Automatically converts layers when needed for filters
@@ -952,6 +957,17 @@ Apply auto contrast adjustment.
 photoshop_auto_contrast()
 ```
 
+#### `photoshop_adjust_curves`
+Create a Curves adjustment layer on the active document.
+
+**Parameters:**
+- `preset` (string, optional): `auto_tone` (S-curve) or `neutral` (identity curve); default `auto_tone`
+
+```javascript
+// Example: Auto-tone S-curve
+photoshop_adjust_curves({ preset: 'auto_tone' })
+```
+
 #### `photoshop_desaturate`
 Desaturate the layer (convert to grayscale).
 
@@ -1088,6 +1104,43 @@ Apply (merge) the layer mask to the layer.
 ```javascript
 // Example: Apply mask
 photoshop_apply_layer_mask()
+```
+
+#### `photoshop_select_subject`
+Run Select Subject on the active layer (pixel selection only, no mask). Requires Photoshop 23+.
+
+**Parameters:**
+- `sample_all_layers` (boolean, optional): Sample all layers for autoCutout fallback; default `false`
+
+```javascript
+// Example: Select the main subject
+photoshop_select_subject()
+```
+
+#### `photoshop_content_aware_fill`
+Fill the current pixel selection using Content-Aware Fill. Requires an active selection.
+
+```javascript
+// Example: Remove selected distraction
+photoshop_content_aware_fill()
+```
+
+#### `photoshop_apply_gradient_mask`
+Apply a linear black-to-white gradient on the active layer mask (fade/blend).
+
+**Parameters:**
+- `direction` (string, optional): Fade direction — `bottom_to_top`, `top_to_bottom`, `left_to_right`, `right_to_left`; default `bottom_to_top`
+- `start_pct` (number, optional): Gradient start along fade axis (0–100); default `0`
+- `end_pct` (number, optional): Gradient end along fade axis (0–100); default `100`
+- `angle_deg` (number, optional): Override gradient angle in degrees
+
+```javascript
+// Example: Fade subject into background from bottom
+photoshop_apply_gradient_mask({
+  direction: 'bottom_to_top',
+  start_pct: 0,
+  end_pct: 100
+})
 ```
 
 ### History & Undo/Redo
@@ -1511,7 +1564,7 @@ photoshop-mcp/
 │   │   ├── photoshop-api.ts    # API factory
 │   │   ├── batch-play.ts       # UXP batchPlay helpers (legacy)
 │   │   └── extendscript.ts     # ExtendScript snippets library
-│   ├── tools/            # MCP tool implementations (42+ tools)
+│   ├── tools/            # MCP tool implementations (78 tools: 66 atomic + 12 recipe)
 │   │   ├── document-tools.ts        # Document operations
 │   │   ├── layer-tools.ts           # Layer creation/deletion
 │   │   ├── layer-properties-tools.ts # Opacity, blend modes, etc.
@@ -1521,8 +1574,11 @@ photoshop-mcp/
 │   │   ├── filter-tools.ts          # Blur, sharpen, noise
 │   │   ├── adjustment-tools.ts      # Color adjustments
 │   │   ├── text-tools.ts            # Text formatting
-│   │   ├── selection-tools.ts       # Selections & masks
-│   │   └── action-tools.ts          # Actions & custom scripts
+│   │   ├── selection-tools.ts       # Selections & subject isolation
+│   │   ├── mask-tools.ts            # Gradient mask blending
+│   │   ├── state-tools.ts           # State, preview, capabilities
+│   │   ├── action-tools.ts          # Actions & custom scripts
+│   │   └── recipes/                 # 12 outcome-oriented recipe tools
 │   └── utils/            # Utilities
 │       └── logger.ts     # Logging system (stderr-based)
 └── examples/             # Configuration examples

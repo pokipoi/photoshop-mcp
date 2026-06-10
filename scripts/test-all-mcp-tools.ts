@@ -376,7 +376,7 @@ async function main(): Promise<void> {
   await transport.close();
 
   const failed = t.getResults().filter((r) => r.outcome === 'fail').length;
-  const requiredTools = 66;
+  const requiredTools = 78;
   const passedTools = t.getResults().filter((r) => r.outcome === 'pass' && r.name.startsWith('photoshop_')).length;
   console.log(`\nTool coverage: ${passedTools}/${requiredTools} atomic+recipe tools passed.`);
   process.exit(failed > 0 ? 1 : 0);

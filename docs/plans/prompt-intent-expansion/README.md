@@ -2,19 +2,20 @@
 
 Expand the Photoshop MCP prompt layer so host LLMs map colloquial user language (blogs, Reddit, natural chat) to the correct `photoshop_recipe_*` / `photoshop_*` tools. Full stack: intent glossary, guide prompts, ExtendScript primitives, new recipes, verification.
 
-## Baseline → target
+## Baseline → delivered
 
-| Layer | Baseline (today) | After Phase 5 | Anchor |
-|-------|------------------|---------------|--------|
-| Atomic tools | 55 | **59** (+4 core) | `src/core/server.ts:106-121` |
-| Recipe tools | 8 | 12 | `src/tools/recipes/index.ts:25-34` |
-| Recipe prompts | 8 | 12 | `src/prompts/registry.ts:12-21` |
-| Guide prompts | 0 | 4 | Phase 1 (`ps.gradient_blend`, etc.) |
+| Layer | Baseline (pre-expansion) | Delivered | Anchor |
+|-------|--------------------------|-----------|--------|
+| Atomic tools | 62 | **66** (+4) | `src/core/server.ts:106-121` |
+| Recipe tools | 8 | 12 | `src/tools/recipes/index.ts:33-46` |
+| Total tools | 70 | **78** | atomic + recipe |
+| Recipe prompts | 8 | 12 | `src/prompts/registry.ts:27-39` |
+| Guide prompts | 0 | 4 | `src/prompts/registry.ts:20-25` |
 | Instructions | bootstrap + recipe list | + glossary, degrade paths, disambiguation | `src/prompts/instructions.ts:5-64` |
-| ExtendScript snippets | none for Tier A gaps | curves, gradient mask, select subject, content-aware (+ generative if spike OK) | `src/api/extendscript.ts:86+` |
+| ExtendScript snippets | none for Tier A gaps | curves, gradient mask, select subject, content-aware fill + user handoff (generative omitted — Phase 0 spike negative) | `src/api/extendscript.ts:86+` |
 | Verify linter | strict 8↔8 recipe parity | 12↔12 recipes + separate guide list | `scripts/verify-photoshop-prompt-coverage.ts:44-80` |
 
-**Next step:** Phase 5 complete — see [phase-5-handoff.md](./phase-5-handoff.md).
+**Status:** shipped — all 5 phases done; 78 tools / 16 prompts in parity. See [phase-5-handoff.md](./phase-5-handoff.md).
 
 ## Phases
 
@@ -33,12 +34,12 @@ Handoff docs (`phase-N-handoff.md`) are written by the implementing agent after 
 
 | Decision | Value |
 |----------|-------|
-| Backward compatibility | **No** strict compat on prompt/instruction/description **text** — may rewrite aggressively. Existing 55 atomic + 8 recipe **tool names and input schemas** stay unchanged. New tools/recipes are **additive**. |
+| Backward compatibility | **No** strict compat on prompt/instruction/description **text** — may rewrite aggressively. Existing `photoshop_*` / `photoshop_recipe_*` **tool names and input schemas** stay unchanged. New tools/recipes are **additive**. |
 | Scope | **Full stack** — prompts + ExtendScript + atomics + recipes + verification. |
 | Dev platform | **macOS** (ExtendScript spike runs on user's machine). |
 | Scripting API | External MCP uses **ExtendScript only** — `UXPPhotoshopAPI` is not available for AppleScript/COM (`src/api/photoshop-api.ts:48-51`). |
 | Prompt parity model | **Recipe prompts** stay 1:1 with `photoshop_recipe_*`. **Guide prompts** (`ps.gradient_blend`, etc.) are registered separately — not in `RECIPE_TO_PROMPT`. |
-| Generative AI tools | **Gated on Phase 0 spike** — include only if `executeAction` descriptors work; else content-aware fallback + user handoff. |
+| Generative AI tools | **Omitted** — `executeAction` generative descriptors not reliably scriptable; content-aware fallback + user handoff shipped. |
 
 ## Dependency order
 
