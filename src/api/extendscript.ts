@@ -21,6 +21,7 @@ function getContextInfo() {
   };
   
   if (context.hasDocument) {
+    try {
     var doc = app.activeDocument;
     context.document = {
       name: doc.name,
@@ -39,36 +40,199 @@ function getContextInfo() {
       })()
     };
     
-    if (doc.activeLayer) {
-      var layer = doc.activeLayer;
-      context.activeLayer = {
-        name: layer.name,
-        kind: String(layer.kind),
-        opacity: layer.opacity,
-        blendMode: String(layer.blendMode),
-        visible: layer.visible,
-        locked: layer.allLocked,
-        isBackground: layer.isBackgroundLayer
-      };
-      
-      // Add bounds if available
-      try {
-        var bounds = layer.bounds;
-        context.activeLayer.bounds = {
-          left: bounds[0].as('px'),
-          top: bounds[1].as('px'),
-          right: bounds[2].as('px'),
-          bottom: bounds[3].as('px')
+    try {
+      if (doc.activeLayer) {
+        var layer = doc.activeLayer;
+        context.activeLayer = {
+          name: layer.name,
+          kind: String(layer.kind),
+          opacity: layer.opacity,
+          blendMode: String(layer.blendMode),
+          visible: layer.visible,
+          locked: layer.allLocked
         };
-      } catch (e) {
-        // Bounds not available for some layer types
+        try {
+          context.activeLayer.isBackground = layer.isBackgroundLayer;
+        } catch (e) {
+          context.activeLayer.isBackground = false;
+        }
+        try {
+          var bounds = layer.bounds;
+          context.activeLayer.bounds = {
+            left: bounds[0].as('px'),
+            top: bounds[1].as('px'),
+            right: bounds[2].as('px'),
+            bottom: bounds[3].as('px')
+          };
+        } catch (e) {
+          // Bounds not available for some layer types
+        }
       }
+    } catch (e) {
+      context.activeLayer = null;
+    }
+    } catch (e) {
+      context.document = { error: e.message || String(e) };
     }
   }
   
   return context;
 }
 `;
+
+/** Curves adjustment layer helper — shared by atomics and recipes (uses __mcp_s2t / __mcp_c2t). */
+export const MCP_CURVES_ADJUSTMENT_HELPER = `
+function __mcp_makeCurvesAdjustmentLayer(preset) {
+  var usePreset = preset || 'auto_tone';
+  var desc = new ActionDescriptor();
+  var ref = new ActionReference();
+  ref.putClass(__mcp_s2t('adjustmentLayer'));
+  desc.putReference(__mcp_s2t('null'), ref);
+  var using = new ActionDescriptor();
+  var curvesAdjust = new ActionDescriptor();
+  var curvesAdjustments = new ActionList();
+  var curvesPair = new ActionDescriptor();
+  var curvesPoints = new ActionList();
+  var ptBlack = new ActionDescriptor();
+  var ptWhite = new ActionDescriptor();
+  if (usePreset === 'neutral') {
+    ptBlack.putDouble(__mcp_c2t('Hrzn'), 0);
+    ptBlack.putDouble(__mcp_c2t('Vrtc'), 0);
+    ptWhite.putDouble(__mcp_c2t('Hrzn'), 255);
+    ptWhite.putDouble(__mcp_c2t('Vrtc'), 255);
+  } else {
+    ptBlack.putDouble(__mcp_c2t('Hrzn'), 12);
+    ptBlack.putDouble(__mcp_c2t('Vrtc'), 0);
+    ptWhite.putDouble(__mcp_c2t('Hrzn'), 243);
+    ptWhite.putDouble(__mcp_c2t('Vrtc'), 255);
+  }
+  curvesPoints.putObject(__mcp_c2t('Pnt '), ptBlack);
+  curvesPoints.putObject(__mcp_c2t('Pnt '), ptWhite);
+  curvesPair.putList(__mcp_c2t('Crv '), curvesPoints);
+  var channelRef = new ActionReference();
+  channelRef.putEnumerated(__mcp_c2t('Chnl'), __mcp_c2t('Chnl'), __mcp_c2t('Cmps'));
+  curvesPair.putReference(__mcp_c2t('Chnl'), channelRef);
+  curvesAdjustments.putObject(__mcp_c2t('CrvA'), curvesPair);
+  curvesAdjust.putList(__mcp_c2t('Adjs'), curvesAdjustments);
+  using.putObject(__mcp_s2t('type'), __mcp_s2t('curves'), curvesAdjust);
+  desc.putObject(__mcp_s2t('using'), __mcp_s2t('adjustmentLayer'), using);
+  executeAction(__mcp_s2t('make'), desc, DialogModes.NO);
+  return app.activeDocument.activeLayer;
+}
+`;
+
+const mcpActionHelperAliases = `
+function __mcp_s2t(s) { return sTID(s); }
+function __mcp_c2t(s) { return cTID(s); }
+`;
+
+/**
+ * Layer mask helpers — Adobe Community / StackSupport.jsx patterns.
+ * @see https://community.adobe.com/t5/photoshop-ecosystem-discussions/is-it-possible-to-make-a-layer-mask-with-the-current-selection-using-extendscript/td-p/10872052
+ * @see https://github.com/LeZuse/photoshop-scripts/blob/master/default/Stack%20Scripts%20Only/StackSupport.jsx
+ */
+export const MCP_LAYER_MASK_HELPERS = `
+function __mcp_hasLayerMaskAM() {
+  var ref = new ActionReference();
+  var args = new ActionDescriptor();
+  ref.putProperty(cTID('Prpr'), cTID('UsrM'));
+  ref.putEnumerated(cTID('Lyr '), cTID('Ordn'), cTID('Trgt'));
+  args.putReference(cTID('null'), ref);
+  try {
+    var resultDesc = executeAction(cTID('getd'), args, DialogModes.NO);
+    return resultDesc.hasKey(cTID('UsrM'));
+  } catch (e) {
+    return false;
+  }
+}
+
+function __mcp_makeLayerMaskAtChannel(maskMode) {
+  var desc = new ActionDescriptor();
+  var atRef = new ActionReference();
+  desc.putClass(sTID('new'), sTID('channel'));
+  atRef.putEnumerated(sTID('channel'), sTID('channel'), sTID('mask'));
+  desc.putReference(sTID('at'), atRef);
+  desc.putEnumerated(sTID('using'), sTID('userMaskEnabled'), sTID(maskMode));
+  executeAction(sTID('make'), desc, DialogModes.NO);
+}
+
+function __mcp_selectLayerMaskChannel() {
+  var selRef = new ActionReference();
+  selRef.putEnumerated(cTID('Chnl'), cTID('Ordn'), cTID('Trgt'));
+  var selDesc = new ActionDescriptor();
+  selDesc.putReference(cTID('null'), selRef);
+  selDesc.putBoolean(cTID('MkVs'), true);
+  executeAction(cTID('slct'), selDesc, DialogModes.NO);
+}
+
+function __mcp_pointDescPx(x, y) {
+  var desc = new ActionDescriptor();
+  desc.putUnitDouble(cTID('Hrzn'), cTID('#Pxl'), x);
+  desc.putUnitDouble(cTID('Vrtc'), cTID('#Pxl'), y);
+  return desc;
+}
+
+function __mcp_gradientStop(location, midPoint) {
+  var desc = new ActionDescriptor();
+  desc.putInteger(cTID('Lctn'), location);
+  desc.putInteger(cTID('Mdpn'), midPoint);
+  return desc;
+}
+
+function __mcp_grayColor(grayValue) {
+  var desc = new ActionDescriptor();
+  desc.putDouble(cTID('Gry '), grayValue);
+  return desc;
+}
+
+/** Linear black-to-white gradient on the active mask channel (StackSupport.jsx pattern). */
+function __mcp_gradientFillLayerMask(fromXPx, fromYPx, toXPx, toYPx, reverseGradient) {
+  var args = new ActionDescriptor();
+  args.putObject(cTID('From'), cTID('Pnt '), __mcp_pointDescPx(fromXPx, fromYPx));
+  args.putObject(cTID('T   '), cTID('Pnt '), __mcp_pointDescPx(toXPx, toYPx));
+  args.putEnumerated(cTID('Md  '), cTID('BlnM'), cTID('Nrml'));
+  args.putEnumerated(cTID('Type'), cTID('GrdT'), cTID('Lnr '));
+  args.putBoolean(cTID('Dthr'), true);
+  args.putBoolean(cTID('UsMs'), true);
+  args.putBoolean(cTID('Rvrs'), !!reverseGradient);
+
+  var gradDesc = new ActionDescriptor();
+  gradDesc.putString(cTID('Nm  '), 'Black, White');
+  gradDesc.putEnumerated(cTID('GrdF'), cTID('GrdF'), cTID('CstS'));
+  gradDesc.putDouble(cTID('Intr'), 4096.0);
+
+  var colorList = new ActionList();
+  var stopWhite = __mcp_gradientStop(0, 50);
+  stopWhite.putObject(cTID('Clr '), cTID('Grsc'), __mcp_grayColor(100.0));
+  stopWhite.putEnumerated(cTID('Type'), cTID('Clry'), cTID('UsrS'));
+  colorList.putObject(cTID('Clrt'), stopWhite);
+  var stopBlack = __mcp_gradientStop(4096, 50);
+  stopBlack.putObject(cTID('Clr '), cTID('Grsc'), __mcp_grayColor(0.0));
+  stopBlack.putEnumerated(cTID('Type'), cTID('Clry'), cTID('UsrS'));
+  colorList.putObject(cTID('Clrt'), stopBlack);
+  gradDesc.putList(cTID('Clrs'), colorList);
+
+  var xferList = new ActionList();
+  var xferA = __mcp_gradientStop(0, 50);
+  xferA.putUnitDouble(cTID('Opct'), cTID('#Prc'), 100.0);
+  xferList.putObject(cTID('TrnS'), xferA);
+  var xferB = __mcp_gradientStop(4096, 50);
+  xferB.putUnitDouble(cTID('Opct'), cTID('#Prc'), 100.0);
+  xferList.putObject(cTID('TrnS'), xferB);
+  gradDesc.putList(cTID('Trns'), xferList);
+
+  args.putObject(cTID('Grad'), cTID('Grdn'), gradDesc);
+  executeAction(cTID('Grdn'), args, DialogModes.NO);
+}
+`;
+
+export type CurvesPreset = 'auto_tone' | 'neutral';
+
+export type GradientMaskDirection =
+  | 'top_to_bottom'
+  | 'bottom_to_top'
+  | 'left_to_right'
+  | 'right_to_left';
 
 /**
  * Common ExtendScript snippets
@@ -856,23 +1020,44 @@ export const ExtendScriptSnippets = {
       layer.rasterize(RasterizeType.ENTIRELAYER);
     }
 
-    var desc = new ActionDescriptor();
-    desc.putEnumerated(
-      sTID('presetKind'),
-      sTID('presetKindType'),
-      sTID('presetKindCustom')
-    );
-    desc.putBoolean(cTID('Clrz'), false);
+    if (layer.blendMode !== BlendMode.NORMAL) {
+      layer.blendMode = BlendMode.NORMAL;
+    }
 
-    var adjustments = new ActionList();
-    var adjustment = new ActionDescriptor();
-    adjustment.putInteger(cTID('H   '), ${hue});
-    adjustment.putInteger(cTID('Strt'), ${saturation});
-    adjustment.putInteger(cTID('Lght'), ${lightness});
-    adjustments.putObject(cTID('Hsrt'), adjustment);
-    desc.putList(cTID('Adjs'), adjustments);
+    if (layer.kind === LayerKind.NORMAL) {
+      try { layer.rasterize(RasterizeType.ENTIRELAYER); } catch (eRaster) {}
+    }
 
-    executeAction(cTID('HStr'), desc, DialogModes.NO);
+    function __runHueSatAction(hueVal, satVal, lightVal) {
+      var desc = new ActionDescriptor();
+      desc.putEnumerated(sTID('presetKind'), sTID('presetKindType'), sTID('presetKindCustom'));
+      desc.putBoolean(cTID('Clrz'), false);
+      var adjustments = new ActionList();
+      var adjustment = new ActionDescriptor();
+      adjustment.putEnumerated(cTID('Chnl'), cTID('Chnl'), cTID('Cmps'));
+      adjustment.putInteger(cTID('H   '), hueVal);
+      adjustment.putInteger(cTID('Strt'), satVal);
+      adjustment.putInteger(cTID('Lght'), lightVal);
+      adjustments.putObject(cTID('Hst2'), adjustment);
+      desc.putList(cTID('Adjs'), adjustments);
+      executeAction(cTID('HStr'), desc, DialogModes.NO);
+    }
+
+    try {
+      __runHueSatAction(${hue}, ${saturation}, ${lightness});
+    } catch (eHst2) {
+      var legacy = new ActionDescriptor();
+      legacy.putEnumerated(sTID('presetKind'), sTID('presetKindType'), sTID('presetKindCustom'));
+      legacy.putBoolean(cTID('Clrz'), false);
+      var legacyAdj = new ActionList();
+      var legacyItem = new ActionDescriptor();
+      legacyItem.putInteger(cTID('H   '), ${hue});
+      legacyItem.putInteger(cTID('Strt'), ${saturation});
+      legacyItem.putInteger(cTID('Lght'), ${lightness});
+      legacyAdj.putObject(cTID('Hsrt'), legacyItem);
+      legacy.putList(cTID('Adjs'), legacyAdj);
+      executeAction(cTID('HStr'), legacy, DialogModes.NO);
+    }
 
     return {
       adjustment: 'Hue/Saturation',
@@ -925,22 +1110,72 @@ export const ExtendScriptSnippets = {
   `,
 
   /**
+   * Create a Curves adjustment layer (auto-tone S-curve or neutral identity curve).
+   */
+  adjustCurves: (preset: CurvesPreset = 'auto_tone') => `
+    ${helperFunctions}
+    ${mcpActionHelperAliases}
+    ${MCP_CURVES_ADJUSTMENT_HELPER}
+
+    if (app.documents.length === 0) {
+      throw new Error('No active document');
+    }
+
+    app.displayDialogs = DialogModes.NO;
+    var layer = __mcp_makeCurvesAdjustmentLayer('${preset}');
+
+    return {
+      created: true,
+      layer_name: layer.name,
+      preset: '${preset}'
+    };
+  `,
+
+  /**
    * Desaturate (convert to grayscale without changing color mode)
    */
   desaturate: () => `
+    ${helperFunctions}
+
     if (app.documents.length === 0) {
       throw new Error('No active document');
     }
     var layer = app.activeDocument.activeLayer;
-    
-    // Auto-rasterize if needed
+
+    if (layer.blendMode !== BlendMode.NORMAL) {
+      layer.blendMode = BlendMode.NORMAL;
+    }
+
     if (layer.kind === LayerKind.TEXT || layer.kind === LayerKind.SMARTOBJECT) {
       layer.rasterize(RasterizeType.ENTIRELAYER);
     }
-    
-    layer.desaturate();
-    
-    return { 
+
+    if (layer.kind === LayerKind.NORMAL) {
+      try { layer.rasterize(RasterizeType.ENTIRELAYER); } catch (eRaster) {}
+    }
+
+    try {
+      layer.desaturate();
+    } catch (eDom) {
+      try {
+        executeAction(sTID('desaturate'), undefined, DialogModes.NO);
+      } catch (eAction) {
+        var desc = new ActionDescriptor();
+        desc.putEnumerated(sTID('presetKind'), sTID('presetKindType'), sTID('presetKindCustom'));
+        desc.putBoolean(cTID('Clrz'), false);
+        var adjustments = new ActionList();
+        var adjustment = new ActionDescriptor();
+        adjustment.putEnumerated(cTID('Chnl'), cTID('Chnl'), cTID('Cmps'));
+        adjustment.putInteger(cTID('H   '), 0);
+        adjustment.putInteger(cTID('Strt'), -100);
+        adjustment.putInteger(cTID('Lght'), 0);
+        adjustments.putObject(cTID('Hst2'), adjustment);
+        desc.putList(cTID('Adjs'), adjustments);
+        executeAction(cTID('HStr'), desc, DialogModes.NO);
+      }
+    }
+
+    return {
       adjustment: 'Desaturate'
     };
   `,
@@ -1135,45 +1370,196 @@ export const ExtendScriptSnippets = {
   `,
 
   /**
+   * Select the main subject on the active layer (DOM selectSubject, then autoCutout fallback).
+   */
+  selectSubject: (sampleAllLayers = false) => `
+    if (app.documents.length === 0) {
+      throw new Error('No active document');
+    }
+
+    var doc = app.activeDocument;
+    app.displayDialogs = DialogModes.NO;
+
+    var subjectSelected = false;
+    var method = '';
+    try {
+      doc.selection.selectSubject();
+      subjectSelected = true;
+      method = 'selectSubject';
+    } catch (eDomSubject) {}
+
+    if (!subjectSelected) {
+      try {
+        ${helperFunctions}
+        var cutoutDesc = new ActionDescriptor();
+        cutoutDesc.putBoolean(sTID('sampleAllLayers'), ${sampleAllLayers});
+        executeAction(sTID('autoCutout'), cutoutDesc, DialogModes.NO);
+        subjectSelected = true;
+        method = 'autoCutout';
+      } catch (eSelectSubject) {
+        throw new Error('Select Subject is not available: ' + (eSelectSubject.message || eSelectSubject));
+      }
+    }
+
+    var hasSel = false;
+    try { hasSel = doc.selection.bounds != null; } catch (e) { hasSel = false; }
+    if (!hasSel) {
+      throw new Error('Select Subject produced no selection');
+    }
+
+    return {
+      selected: true,
+      method: method
+    };
+  `,
+
+  /**
+   * Content-aware fill on the current pixel selection.
+   */
+  contentAwareFill: () => `
+    ${helperFunctions}
+
+    if (app.documents.length === 0) {
+      throw new Error('No active document');
+    }
+
+    var doc = app.activeDocument;
+    var hasSel = false;
+    try { hasSel = doc.selection.bounds != null; } catch (e) { hasSel = false; }
+    if (!hasSel) {
+      throw new Error('selection_required');
+    }
+
+    app.displayDialogs = DialogModes.NO;
+
+    var desc = new ActionDescriptor();
+    desc.putEnumerated(sTID('using'), sTID('fillContents'), sTID('contentAware'));
+    executeAction(sTID('fill'), desc, DialogModes.NO);
+    doc.selection.deselect();
+
+    return {
+      filled: true
+    };
+  `,
+
+  /**
    * Create layer mask from selection
    */
   createLayerMask: () => `
     ${helperFunctions}
-    
+    ${MCP_LAYER_MASK_HELPERS}
+
     if (app.documents.length === 0) {
       throw new Error('No active document');
     }
-    
-    // Create mask using ActionDescriptor
-    var desc = new ActionDescriptor();
-    var ref = new ActionReference();
-    ref.putEnumerated(cTID('Chnl'), cTID('Chnl'), cTID('Msk '));
-    desc.putReference(cTID('Nw  '), ref);
-    desc.putEnumerated(cTID('Usng'), cTID('UsrM'), cTID('RvlS'));
-    executeAction(cTID('Mk  '), desc, DialogModes.NO);
-    
-    return { 
-      maskCreated: true
+
+    if (__mcp_hasLayerMaskAM()) {
+      return {
+        maskCreated: false,
+        fromSelection: false,
+        message: 'Layer already has a mask'
+      };
+    }
+
+    var hasSelection = false;
+    try { hasSelection = !!(app.activeDocument.selection.bounds); } catch (e) { hasSelection = false; }
+
+    app.displayDialogs = DialogModes.NO;
+    __mcp_makeLayerMaskAtChannel(hasSelection ? 'revealSelection' : 'revealAll');
+
+    return {
+      maskCreated: true,
+      fromSelection: hasSelection
     };
   `,
+
+  /**
+   * Apply a linear black-to-white gradient on the active layer's mask channel.
+   */
+  applyGradientMask: (
+    direction: GradientMaskDirection = 'bottom_to_top',
+    startPct = 0,
+    endPct = 100,
+    angleDeg?: number
+  ) => {
+    const gradientEndpoints: Record<
+      GradientMaskDirection,
+      { fromH: number; fromV: number; toH: number; toV: number; reverse: boolean }
+    > = {
+      bottom_to_top: { fromH: 50, fromV: endPct, toH: 50, toV: startPct, reverse: false },
+      top_to_bottom: { fromH: 50, fromV: startPct, toH: 50, toV: endPct, reverse: false },
+      left_to_right: { fromH: startPct, fromV: 50, toH: endPct, toV: 50, reverse: false },
+      right_to_left: { fromH: endPct, fromV: 50, toH: startPct, toV: 50, reverse: false },
+    };
+    const endpoints = gradientEndpoints[direction];
+    const angle = angleDeg ?? (direction === 'left_to_right' || direction === 'right_to_left' ? 0 : 90);
+
+    return `
+    ${helperFunctions}
+    ${MCP_LAYER_MASK_HELPERS}
+
+    if (app.documents.length === 0) {
+      throw new Error('No active document');
+    }
+
+    var doc = app.activeDocument;
+    var layer = doc.activeLayer;
+    if (!layer) {
+      throw new Error('No active layer');
+    }
+
+    if (!__mcp_hasLayerMaskAM()) {
+      throw new Error('Active layer has no layer mask');
+    }
+
+    app.displayDialogs = DialogModes.NO;
+    doc.activeLayer = layer;
+    __mcp_selectLayerMaskChannel();
+
+    var docW = doc.width.as('px');
+    var docH = doc.height.as('px');
+    var fromXPx = docW * (${endpoints.fromH} / 100.0);
+    var fromYPx = docH * (${endpoints.fromV} / 100.0);
+    var toXPx = docW * (${endpoints.toH} / 100.0);
+    var toYPx = docH * (${endpoints.toV} / 100.0);
+    __mcp_gradientFillLayerMask(fromXPx, fromYPx, toXPx, toYPx, ${endpoints.reverse});
+
+    try {
+      doc.activeChannels = doc.componentChannels;
+    } catch (eRestore) {
+      doc.activeLayer = layer;
+    }
+
+    return {
+      applied: true,
+      direction: '${direction}',
+      angle: ${angle}
+    };
+  `;
+  },
 
   /**
    * Delete layer mask
    */
   deleteLayerMask: () => `
     ${helperFunctions}
-    
+
     if (app.documents.length === 0) {
       throw new Error('No active document');
     }
-    
+
+    var layer = app.activeDocument.activeLayer;
+    if (!layer.hasLayerMask) {
+      return { maskDeleted: false, message: 'Layer has no mask' };
+    }
+
     var desc = new ActionDescriptor();
     var ref = new ActionReference();
     ref.putEnumerated(cTID('Chnl'), cTID('Chnl'), cTID('Msk '));
     desc.putReference(cTID('null'), ref);
     executeAction(cTID('Dlt '), desc, DialogModes.NO);
-    
-    return { 
+
+    return {
       maskDeleted: true
     };
   `,
@@ -1183,18 +1569,27 @@ export const ExtendScriptSnippets = {
    */
   applyLayerMask: () => `
     ${helperFunctions}
-    
+
     if (app.documents.length === 0) {
       throw new Error('No active document');
     }
-    
+
     var desc = new ActionDescriptor();
     var ref = new ActionReference();
-    ref.putEnumerated(cTID('Chnl'), cTID('Chnl'), cTID('Msk '));
-    desc.putReference(cTID('null'), ref);
-    executeAction(cTID('Aply'), desc, DialogModes.NO);
-    
-    return { 
+    ref.putEnumerated(sTID('channel'), sTID('ordinal'), sTID('targetEnum'));
+    desc.putReference(sTID('null'), ref);
+    desc.putBoolean(sTID('apply'), true);
+    try {
+      executeAction(sTID('delete'), desc, DialogModes.NO);
+    } catch (eDeleteApply) {
+      var legacy = new ActionDescriptor();
+      var legacyRef = new ActionReference();
+      legacyRef.putEnumerated(cTID('Chnl'), cTID('Chnl'), cTID('Msk '));
+      legacy.putReference(cTID('null'), legacyRef);
+      executeAction(cTID('Aply'), legacy, DialogModes.NO);
+    }
+
+    return {
       maskApplied: true
     };
   `,
@@ -1222,22 +1617,46 @@ export const ExtendScriptSnippets = {
    * Rasterize active layer
    */
   rasterizeLayer: () => `
+    ${helperFunctions}
+
     if (app.documents.length === 0) {
       throw new Error('No active document');
     }
     var layer = app.activeDocument.activeLayer;
-    
+
+    if (layer.typename === 'LayerSet') {
+      throw new Error('Cannot rasterize a layer group — select a single layer');
+    }
+
+    var originalKind = String(layer.kind);
     if (layer.kind === LayerKind.NORMAL) {
-      return { 
+      return {
         message: 'Layer is already rasterized',
         kind: 'NORMAL'
       };
     }
-    
-    var originalKind = String(layer.kind);
-    layer.rasterize(RasterizeType.ENTIRELAYER);
-    
-    return { 
+
+    if (layer.kind === LayerKind.TEXT) {
+      layer.rasterize(RasterizeType.TEXTCONTENTS);
+    } else if (layer.kind === LayerKind.SMARTOBJECT) {
+      var desc = new ActionDescriptor();
+      var ref = new ActionReference();
+      ref.putEnumerated(sTID('layer'), sTID('ordinal'), sTID('targetEnum'));
+      desc.putReference(sTID('null'), ref);
+      executeAction(sTID('rasterizePlaced'), desc, DialogModes.NO);
+    } else {
+      try {
+        layer.rasterize(RasterizeType.ENTIRELAYER);
+      } catch (eDom) {
+        var desc2 = new ActionDescriptor();
+        var ref2 = new ActionReference();
+        ref2.putEnumerated(sTID('layer'), sTID('ordinal'), sTID('targetEnum'));
+        desc2.putReference(sTID('null'), ref2);
+        executeAction(sTID('rasterizeLayer'), desc2, DialogModes.NO);
+      }
+    }
+
+    return {
       rasterized: true,
       originalKind: originalKind,
       newKind: 'NORMAL'
@@ -1454,9 +1873,14 @@ export const ExtendScriptSnippets = {
     }
     var doc = app.activeDocument;
     var layer = doc.activeLayer;
-    
+
+    if (layer.isBackgroundLayer) {
+      throw new Error('Cannot move background layer');
+    }
+
     if (doc.layers.length > 0) {
-      layer.move(doc.layers[doc.layers.length - 1], ElementPlacement.PLACEAFTER);
+      var bottomLayer = doc.layers[doc.layers.length - 1];
+      layer.move(bottomLayer, ElementPlacement.PLACEBEFORE);
     }
     
     var result = {
@@ -1548,6 +1972,60 @@ export const ExtendScriptSnippets = {
       context: getContextInfo()
     };
     return result;
+  `,
+
+  /**
+   * Lightweight session state snapshot (read-only).
+   */
+  getState: () => `
+    ${getContextInfo}
+    return getContextInfo();
+  `,
+
+  /**
+   * Export a JPEG preview to the system temp folder. Returns filesystem path for Node to read.
+   */
+  exportPreview: (maxDimension = 1024, jpegQuality = 8) => `
+    ${getContextInfo}
+
+    if (app.documents.length === 0) {
+      throw new Error('No active document');
+    }
+
+    var doc = app.activeDocument;
+    var w = doc.width.as('px');
+    var h = doc.height.as('px');
+    var maxDim = ${maxDimension};
+    var scale = 1;
+    if (w > maxDim || h > maxDim) {
+      scale = maxDim / Math.max(w, h);
+    }
+
+    var dup = doc.duplicate('__mcp_preview__', true);
+    if (scale < 1) {
+      dup.resizeImage(
+        UnitValue(Math.round(w * scale), 'px'),
+        UnitValue(Math.round(h * scale), 'px'),
+        doc.resolution,
+        ResampleMethod.BICUBIC
+      );
+    }
+
+    var tmpFile = new File(Folder.temp.fsName + '/ps-preview-' + (new Date().getTime()) + '.jpg');
+    var saveOptions = new JPEGSaveOptions();
+    saveOptions.quality = ${jpegQuality};
+    saveOptions.embedColorProfile = true;
+    saveOptions.formatOptions = FormatOptions.STANDARDBASELINE;
+    dup.flatten();
+    dup.saveAs(tmpFile, saveOptions, true);
+    dup.close(SaveOptions.DONOTSAVECHANGES);
+
+    return {
+      path: tmpFile.fsName,
+      width: Math.round(w * scale),
+      height: Math.round(h * scale),
+      mimeType: 'image/jpeg'
+    };
   `,
 };
 

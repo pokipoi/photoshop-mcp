@@ -1,4 +1,7 @@
 # Photoshop MCP Server
+
+*v1.1+ — recipe workflows, fewer round-trips, snappier sessions.*
+
 > **Note:** This is an unofficial, community-maintained project and is not affiliated with or endorsed by Adobe Inc.
 
 [![npm version](https://img.shields.io/npm/v/@alisaitteke/photoshop-mcp.svg)](https://www.npmjs.com/package/@alisaitteke/photoshop-mcp)
@@ -63,9 +66,176 @@ photoshop-mcp-ui [--port 5174] [--host 127.0.0.1] [--no-open]
 
 ---
 
+## AI/Prompt Layer for Photoshop
+
+On top of atomic `photoshop_*` tools, the server ships an opinionated AI/prompt
+layer that helps host LLMs (Cursor, Claude Desktop, etc.) translate vague user
+requests into reliable Photoshop actions:
+
+- **Server `instructions`** — workflow contract advertised on MCP `initialize`
+  (ping once, state-before-action, prefer recipes, error recovery). See
+  [`src/prompts/instructions.ts`](src/prompts/instructions.ts).
+- **MCP `prompts` primitive** — 16 pre-engineered templates (12 recipe + 4 guide:
+  `ps.enhance_portrait`, `ps.remove_background`, `ps.gradient_fade`, `ps.sky_blend`, …)
+  via `prompts/list` and `prompts/get`.
+- **Recipe tools** — 12 outcome-oriented `photoshop_recipe_*` tools (remove
+  background, enhance portrait, prepare for web, export social variants, color
+  grade, frequency separation, batch mockup, organize layers, gradient fade,
+  sky blend, dodge & burn, remove distraction). Each wraps steps in a single
+  Photoshop history state (one Undo reverts all). **78 tools total** (66 atomic
+  + 12 recipe).
+- **State & preview** — `photoshop_get_state` (cheap snapshot),
+  `photoshop_get_preview` (base64 JPEG for vision verification),
+  `photoshop_get_capabilities` (version-aware feature flags).
+- **Structured errors** — failures return JSON envelopes with `code` and
+  `suggested_next_tool` for self-correction.
+
+Full reference: [`docs/prompt-layer.md`](docs/prompt-layer.md).
+
+Verify parity: `npm run verify:photoshop-prompts`
+
+### Integration test results
+
+Local MCP integration tests run against a live Photoshop instance over stdio
+(same path as Cursor / Claude Desktop). Last verified on **Photoshop 26.5.0**
+(macOS).
+
+*Recorded on PS 26.5.0 before the intent-expansion tools landed; counts predate
+the 4 new atomics + 4 new recipes — re-run `npm run test:mcp-all` to refresh.*
+
+| Suite | Command | Result |
+|-------|---------|--------|
+| Full tool + recipe sweep | `npm run test:mcp-all` | **94 pass**, **0 fail**, **3 skip** (97 total) |
+| Prompt-layer smoke | `npm run test:mcp-local` | 16 prompt templates + core recipes |
+| Prompt ↔ recipe parity | `npm run verify:photoshop-prompts` | 12↔12 strict match + 4 guides |
+
+**Tool coverage:** 78 total tools (66 atomic `photoshop_*` + 12 recipe
+`photoshop_recipe_*`) — re-run `npm run test:mcp-all` for a fresh pass count.
+
+**Intentional skips** (environment-dependent, not regressions):
+
+| Tool | Reason |
+|------|--------|
+| `photoshop_play_action` | Requires a real Actions palette entry on the machine |
+| `photoshop_recipe_remove_background` | Synthetic test canvas has no recognizable subject for Select Subject |
+| `photoshop_recipe_batch_mockup_replace` | Requires a Smart Object mockup PSD |
+
+**PS 26 compatibility notes** (ExtendScript): layer masks use `stringID make`;
+mask apply uses `delete` + `apply: true`; hue/saturation uses `Hst2` descriptors;
+frequency separation uses `applyImageEvent` calculation descriptors. See
+[`src/api/extendscript.ts`](src/api/extendscript.ts) and
+[`src/tools/recipes/_shared.ts`](src/tools/recipes/_shared.ts).
+
+Prerequisites: Photoshop installed and scriptable; run from the repo root after
+`npm run build:server`.
+
+---
+
 ## Example Prompts
 
-Below are example prompts you can use with AI assistants (Claude, Cursor, etc.) when this MCP server is configured:
+Below are example prompts you can use with AI assistants (Claude, Cursor, etc.)
+when this MCP server is configured. Prefer **recipe tools** (`photoshop_recipe_*`)
+for multi-step outcomes — each recipe is a single undo step. Use atomic
+`photoshop_*` tools only for fine-grained edits no recipe covers.
+
+<details>
+<summary>🧠 State-aware session (recommended first step)</summary>
+
+```
+Ping Photoshop and read capabilities for my installed version.
+Get the current document state before changing anything.
+Open portrait.jpg, get a downscaled preview so you can verify the subject.
+After each major recipe, get another preview to confirm the result.
+```
+
+</details>
+
+<details>
+<summary>👤 Portrait retouch (recipe)</summary>
+
+```
+Enhance the portrait on the active layer at medium intensity with skin smoothing.
+Use the enhance-portrait recipe — I want frequency separation + auto-tone in one undoable step.
+If the active layer is text or a Smart Object, rasterize first or pick a raster layer.
+Show me a preview when done.
+```
+
+Equivalent MCP prompt template: `ps.enhance_portrait` with `{ intensity: "medium", skin_smoothing: "true" }`.
+
+</details>
+
+<details>
+<summary>✂️ Background removal (recipe)</summary>
+
+```
+Remove the background from the active portrait layer.
+Use Select Subject + a layer mask with a 2px feather. Keep the original pixels behind the mask.
+The subject must be on the active layer — not a flat color fill.
+```
+
+Equivalent MCP prompt template: `ps.remove_background` with `{ feather_px: "2", keep_shadow: "false" }`.
+
+</details>
+
+<details>
+<summary>🎨 Color grade (recipe)</summary>
+
+```
+Apply a warm film color grade to the open document as non-destructive adjustment layers.
+Use the apply-color-grade recipe with preset warm_film.
+Preview the result when finished.
+```
+
+</details>
+
+<details>
+<summary>🔬 Frequency separation setup (recipe)</summary>
+
+```
+Set up frequency separation on the active raster layer with a 6px blur radius.
+I will paint on the Low and High layers myself — do not apply extra smoothing.
+Tell me which layers to edit when the stack is ready.
+```
+
+Equivalent MCP prompt template: `ps.frequency_separation` with `{ radius_px: "6" }`.
+
+</details>
+
+<details>
+<summary>🌐 Prepare for web + social export (recipes)</summary>
+
+```
+Prepare the active document for web: sRGB, downscale, sharpen, export one optimized JPEG to ~/.photoshop-mcp/exports.
+Then export Instagram post and X post variants as separate JPEGs from the same document.
+List the output paths in a table.
+```
+
+Equivalent templates: `ps.prepare_for_web`, `ps.export_social_variants`.
+
+</details>
+
+<details>
+<summary>📦 Batch mockup replace (recipe)</summary>
+
+```
+I have a mockup PSD open with a Smart Object layer named "Screen".
+Replace it with every PNG/JPG in ~/assets/mockups/ and export one JPEG per asset.
+Do not place flat layers — swap the Smart Object so perspective is preserved.
+```
+
+Equivalent MCP prompt template: `ps.batch_mockup_replace`.
+
+</details>
+
+<details>
+<summary>🗂️ Organize layers (recipe)</summary>
+
+```
+Organize the layer stack: rename by kind, auto-group related layers, preserve originals.
+Run the organize-layers recipe, then list layers so I can review the new structure.
+```
+
+</details>
 
 <details>
 <summary>🎨 Basic Design Creation</summary>
@@ -100,10 +270,9 @@ Save as adventure.jpg with quality 10.
 
 ```
 Open photo.jpg from my Desktop in Photoshop.
-Apply auto levels and auto contrast.
-Apply unsharp mask with amount 120%, radius 1.5, threshold 0.
-Increase saturation by 15.
-Crop to remove 100px from each edge.
+Get state, then run the enhance-portrait recipe at low intensity.
+If I only need quick tone fixes, apply auto levels, auto contrast, and unsharp mask (120%, 1.5, 0) on the active layer instead.
+Adjust hue +15 and saturation +15, or use prepare-for-web when I'm ready to export.
 Save as enhanced-photo.jpg with quality 12.
 ```
 
@@ -241,8 +410,17 @@ Redo 1 step to bring back one operation.
 ```
 
 </details>
----
-> **🎨 50+ Tools** | **🖥️ Cross-Platform** | **📦 NPX Ready** | **🔧 ExtendScript API** | **⏮️ Undo/Redo**
+
+<details>
+<summary>🔁 Error recovery (structured envelopes)</summary>
+
+```
+If a recipe returns version_unsupported or generative_unavailable, call get_capabilities and tell me which Photoshop feature is missing.
+If a tool fails with suggested_next_tool, follow that hint (e.g. rasterize_layer before a raster-only recipe).
+Never guess — read get_state after a failure and propose the next single step.
+```
+
+</details>
 
 ## Features
 
@@ -250,15 +428,16 @@ Redo 1 step to bring back one operation.
 - ✅ **Supports Photoshop 2012-2025+**
 - ✅ **ExtendScript API**: Universal compatibility via AppleScript/COM automation
 - ✅ **Auto-Detection**: Automatically finds Photoshop installation on your system
-- ✅ **50+ Tools**: Comprehensive Photoshop automation
+- ✅ **78 Tools**: 66 atomic `photoshop_*` + 12 recipe `photoshop_recipe_*`
+- ✅ **AI/Prompt Layer**: 16 MCP prompt templates (12 recipe + 4 guide), server instructions, state/preview/capabilities tools
 - ✅ **Document Management**: Create, open, save, close, crop documents
 - ✅ **Layer Operations**: Create, delete, duplicate, merge, transform layers
 - ✅ **Layer Properties**: Opacity, blend modes, visibility, locking
 - ✅ **Text Formatting**: Font, size, color, alignment controls
 - ✅ **Image Placement**: Place images, open files, fit to document
 - ✅ **Filters**: Gaussian Blur, Sharpen, Noise, Motion Blur
-- ✅ **Color Adjustments**: Brightness/Contrast, Hue/Saturation, Auto Levels/Contrast
-- ✅ **Selections & Masks**: Rectangular selections, layer masks
+- ✅ **Color Adjustments**: Brightness/Contrast, Hue/Saturation, Curves, Auto Levels/Contrast
+- ✅ **Selections & Masks**: Rectangular selections, select subject, content-aware fill, gradient mask, layer masks
 - ✅ **History Control**: Undo/Redo operations, view history states
 - ✅ **Actions**: Play recorded actions, execute custom scripts
 - ✅ **Auto-Rasterize**: Automatically converts layers when needed for filters
@@ -778,6 +957,17 @@ Apply auto contrast adjustment.
 photoshop_auto_contrast()
 ```
 
+#### `photoshop_adjust_curves`
+Create a Curves adjustment layer on the active document.
+
+**Parameters:**
+- `preset` (string, optional): `auto_tone` (S-curve) or `neutral` (identity curve); default `auto_tone`
+
+```javascript
+// Example: Auto-tone S-curve
+photoshop_adjust_curves({ preset: 'auto_tone' })
+```
+
 #### `photoshop_desaturate`
 Desaturate the layer (convert to grayscale).
 
@@ -914,6 +1104,43 @@ Apply (merge) the layer mask to the layer.
 ```javascript
 // Example: Apply mask
 photoshop_apply_layer_mask()
+```
+
+#### `photoshop_select_subject`
+Run Select Subject on the active layer (pixel selection only, no mask). Requires Photoshop 23+.
+
+**Parameters:**
+- `sample_all_layers` (boolean, optional): Sample all layers for autoCutout fallback; default `false`
+
+```javascript
+// Example: Select the main subject
+photoshop_select_subject()
+```
+
+#### `photoshop_content_aware_fill`
+Fill the current pixel selection using Content-Aware Fill. Requires an active selection.
+
+```javascript
+// Example: Remove selected distraction
+photoshop_content_aware_fill()
+```
+
+#### `photoshop_apply_gradient_mask`
+Apply a linear black-to-white gradient on the active layer mask (fade/blend).
+
+**Parameters:**
+- `direction` (string, optional): Fade direction — `bottom_to_top`, `top_to_bottom`, `left_to_right`, `right_to_left`; default `bottom_to_top`
+- `start_pct` (number, optional): Gradient start along fade axis (0–100); default `0`
+- `end_pct` (number, optional): Gradient end along fade axis (0–100); default `100`
+- `angle_deg` (number, optional): Override gradient angle in degrees
+
+```javascript
+// Example: Fade subject into background from bottom
+photoshop_apply_gradient_mask({
+  direction: 'bottom_to_top',
+  start_pct: 0,
+  end_pct: 100
+})
 ```
 
 ### History & Undo/Redo
@@ -1285,6 +1512,15 @@ npm run lint
 npm run format
 ```
 
+### Integration tests (requires running Photoshop)
+
+```bash
+npm run build:server
+npm run test:mcp-local    # prompt-layer smoke
+npm run test:mcp-all      # full sequential tool sweep
+npm run verify:photoshop-prompts
+```
+
 ## Quick Start Examples
 
 ### 💡 Common Use Cases
@@ -1299,6 +1535,12 @@ npm run format
 | **Text Styling** | "Change text to Helvetica 64pt, color red, center aligned" |
 | **Batch Work** | "Resize to 1080x1080, auto contrast, save as square.jpg, close" |
 | **Masks** | "Select rectangle 100,100 to 500,500, create layer mask" |
+| **Portrait recipe** | "Enhance portrait at medium intensity with skin smoothing, then preview" |
+| **Background removal** | "Remove background from active layer, 2px feather, non-destructive mask" |
+| **Web export** | "Prepare for web + export Instagram and X post variants to exports folder" |
+| **Color grade** | "Apply warm_film color grade as adjustment layers" |
+| **Frequency separation** | "Build FS stack at 6px — I'll paint the Low/High layers myself" |
+| **State check** | "Ping Photoshop, get capabilities, then get_state before editing" |
 
 ---
 
@@ -1322,7 +1564,7 @@ photoshop-mcp/
 │   │   ├── photoshop-api.ts    # API factory
 │   │   ├── batch-play.ts       # UXP batchPlay helpers (legacy)
 │   │   └── extendscript.ts     # ExtendScript snippets library
-│   ├── tools/            # MCP tool implementations (42+ tools)
+│   ├── tools/            # MCP tool implementations (78 tools: 66 atomic + 12 recipe)
 │   │   ├── document-tools.ts        # Document operations
 │   │   ├── layer-tools.ts           # Layer creation/deletion
 │   │   ├── layer-properties-tools.ts # Opacity, blend modes, etc.
@@ -1332,8 +1574,11 @@ photoshop-mcp/
 │   │   ├── filter-tools.ts          # Blur, sharpen, noise
 │   │   ├── adjustment-tools.ts      # Color adjustments
 │   │   ├── text-tools.ts            # Text formatting
-│   │   ├── selection-tools.ts       # Selections & masks
-│   │   └── action-tools.ts          # Actions & custom scripts
+│   │   ├── selection-tools.ts       # Selections & subject isolation
+│   │   ├── mask-tools.ts            # Gradient mask blending
+│   │   ├── state-tools.ts           # State, preview, capabilities
+│   │   ├── action-tools.ts          # Actions & custom scripts
+│   │   └── recipes/                 # 12 outcome-oriented recipe tools
 │   └── utils/            # Utilities
 │       └── logger.ts     # Logging system (stderr-based)
 └── examples/             # Configuration examples

@@ -47,3 +47,9 @@ app_data
 .mcpregistry_github_token
 
 *.tgz
+
+# Local planning docs (not published)
+docs/plans/
+
+# Local maintenance scripts (not published)
+scripts/add-copyright-headers.ts
